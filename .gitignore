@@ -1,0 +1,21 @@
+# Virtual Environment
+venv/
+
+# Data Files
+data/*.csv
+data/*.duckdb
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
