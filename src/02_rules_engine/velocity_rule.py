@@ -1,77 +1,69 @@
 
 
 
-import duckdb
-import os
+"""
+Velocity Check Rule
+Detects rapid transaction sequences
+"""
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_FILE = os.path.join(BASE_DIR, "data", "fraud_data.duckdb")
+import duckdb
 
 def detect_velocity_abuse():
     """
-    RULE #2: Velocity Abuse Detection
-    
-    Logic:
-    Detect users performing multiple transactions within short time intervals.
-    High frequency activity in brief windows indicates automated fraud or account takeover.
-    
-    Criteria:
-    - Same client performs transactions within 2 hours (step delta <= 2)
-    - Minimum 2 rapid transactions detected
+    Detect suspicious velocity patterns
     """
-    print("[INFO] Running Rule: Velocity Abuse Detection...")
     
-    conn = duckdb.connect(DB_FILE)
+    conn = duckdb.connect('data/fraud_data.duckdb')
     
-    query = """
-        WITH user_txn_sequence AS (
-            SELECT 
-                nameOrig,
-                step,
-                amount,
-                LAG(step) OVER (PARTITION BY nameOrig ORDER BY step) as prev_step
-            FROM transactions
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rule_alerts (
+            alert_id INTEGER PRIMARY KEY,
+            customer_id VARCHAR,
+            rule_name VARCHAR,
+            detection_date DATE,
+            amount DECIMAL(18,2),
+            description TEXT
         )
+    """)
+    
+    max_id = conn.execute("SELECT COALESCE(MAX(alert_id), 0) FROM rule_alerts").fetchone()[0]
+    
+    # PARAMETROS MAS FLEXIBLES: amount > 100000 (antes 50000)
+    query = """
+    WITH velocity_check AS (
         SELECT 
-            nameOrig as client_id,
-            COUNT(*) as rapid_txn_count,
-            CAST(SUM(amount) AS DECIMAL(18,2)) as total_volume,
-            'Velocity_Abuse' as alert_type,
-            75 as risk_score
-        FROM user_txn_sequence
-        WHERE (step - prev_step) <= 2
-        GROUP BY nameOrig
-        HAVING COUNT(*) >= 2
-        ORDER BY rapid_txn_count DESC
-        LIMIT 50
+            nameOrig as customer_id,
+            step,
+            amount,
+            LAG(step) OVER (PARTITION BY nameOrig ORDER BY step) as prev_step,
+            step - LAG(step) OVER (PARTITION BY nameOrig ORDER BY step) as time_diff
+        FROM transactions
+        WHERE type IN ('CASH_OUT', 'TRANSFER')
+          AND amount > 100000
+    )
+    INSERT INTO rule_alerts (alert_id, customer_id, rule_name, detection_date, amount, description)
+    SELECT 
+        ROW_NUMBER() OVER () + ? as alert_id,
+        customer_id,
+        'Velocity_Abuse' as rule_name,
+        CURRENT_DATE as detection_date,
+        amount,
+        'Suspicious velocity: Transaction of $' || ROUND(amount, 2) || ' within ' || time_diff || ' steps'
+    FROM velocity_check
+    WHERE time_diff <= 2
+    LIMIT 50
     """
     
-    try:
-        alerts_df = conn.execute(query).df()
-        
-        if not alerts_df.empty:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS alerts (
-                    client_id VARCHAR, 
-                    rapid_txn_count INTEGER,
-                    total_volume DECIMAL, 
-                    alert_type VARCHAR, 
-                    risk_score INTEGER
-                )
-            """)
-            
-            conn.execute("DELETE FROM alerts WHERE alert_type = 'Velocity_Abuse'")
-            conn.execute("INSERT INTO alerts SELECT * FROM alerts_df")
-            
-            print(f"[SUCCESS] Velocity Alerts Found: {len(alerts_df)}")
-            print(alerts_df.head(5))
-        else:
-            print("[WARNING] No velocity abuse patterns detected.")
+    conn.execute(query, [max_id])
     
-    except Exception as e:
-        print(f"[ERROR] Velocity rule execution failed: {e}")
-    finally:
-        conn.close()
+    count = conn.execute("""
+        SELECT COUNT(*) FROM rule_alerts 
+        WHERE rule_name = 'Velocity_Abuse'
+    """).fetchone()[0]
+    
+    print(f"[INFO] Velocity Check: {count} alerts generated")
+    
+    conn.close()
 
 if __name__ == "__main__":
     detect_velocity_abuse()

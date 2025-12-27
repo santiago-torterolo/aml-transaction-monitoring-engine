@@ -1,134 +1,138 @@
 
 
+"""
+Anomaly Detection using Isolation Forest
+"""
 
 import duckdb
 import pandas as pd
-import pickle
-import os
+import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
+import pickle
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_FILE = os.path.join(BASE_DIR, "data", "fraud_data.duckdb")
-MODEL_PATH = os.path.join(BASE_DIR, "data", "isolation_forest.pkl")
-
-def train_anomaly_model():
+def train_and_score():
     """
-    ML COMPONENT: Unsupervised Anomaly Detection
-    Algorithm: Isolation Forest
-    
-    Purpose:
-    Detect transactions that are statistically unusual compared to the overall 
-    transaction population, without requiring labeled fraud data.
-    
-    Features:
-    - Transaction amount
-    - Balance changes (origin and destination)
-    - Time step (temporal patterns)
-    
-    Output:
-    Trained model saved to disk for scoring new transactions.
+    Train Isolation Forest and score all transactions
     """
-    print("[INFO] Training Isolation Forest model...")
     
-    conn = duckdb.connect(DB_FILE)
+    conn = duckdb.connect('data/fraud_data.duckdb')
     
-    print("[INFO] Loading transaction sample for training...")
-    query = """
+    print("[INFO] Loading transaction data...")
+    
+    # Use valid columns and sampling
+    df_sample = conn.execute("""
         SELECT 
             amount,
             oldbalanceOrg,
             newbalanceOrig,
             oldbalanceDest,
             newbalanceDest,
-            step
+            CASE type
+                WHEN 'PAYMENT' THEN 1
+                WHEN 'TRANSFER' THEN 2
+                WHEN 'CASH_OUT' THEN 3
+                WHEN 'DEBIT' THEN 4
+                WHEN 'CASH_IN' THEN 5
+                ELSE 0
+            END as type_encoded
         FROM transactions
-        USING SAMPLE 10 PERCENT
-    """
-    df = conn.execute(query).df()
-    print(f"[INFO] Training sample size: {len(df):,} records")
+        WHERE amount > 0
+        LIMIT 50000
+    """).fetchdf()
     
+    print(f"[INFO] Training sample: {len(df_sample):,} transactions")
+    
+    # Prepare features
+    features = ['amount', 'oldbalanceOrg', 'newbalanceOrig', 
+                'oldbalanceDest', 'newbalanceDest', 'type_encoded']
+    
+    X_train = df_sample[features].fillna(0)
+    
+    # Normalize
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(df)
+    X_scaled = scaler.fit_transform(X_train)
     
-    print("[INFO] Fitting Isolation Forest (contamination=0.005)...")
+    # Train Isolation Forest
+    print("[INFO] Training Isolation Forest...")
     iso_forest = IsolationForest(
-        n_estimators=100, 
         contamination=0.005,
-        random_state=42, 
-        n_jobs=-1,
-        verbose=0
+        random_state=42,
+        n_estimators=100,
+        max_samples=0.8,
+        n_jobs=-1
     )
+    
     iso_forest.fit(X_scaled)
     
-    with open(MODEL_PATH, 'wb') as f:
-        pickle.dump({'model': iso_forest, 'scaler': scaler, 'features': df.columns.tolist()}, f)
+    # Save model
+    with open('data/isolation_forest.pkl', 'wb') as f:
+        pickle.dump((iso_forest, scaler), f)
     
-    print(f"[SUCCESS] Model trained and saved to {MODEL_PATH}")
-    conn.close()
-
-def score_anomalies():
-    """
-    Apply trained Isolation Forest to detect anomalies in transaction population.
-    Anomaly scores are added to the alerts table for further investigation.
-    """
-    print("[INFO] Scoring transactions for anomalies...")
+    print("[INFO] Model saved to data/isolation_forest.pkl")
     
-    if not os.path.exists(MODEL_PATH):
-        print("[ERROR] Model file not found. Run training first.")
-        return
-
-    with open(MODEL_PATH, 'rb') as f:
-        artifacts = pickle.load(f)
-        model = artifacts['model']
-        scaler = artifacts['scaler']
-        feature_cols = artifacts['features']
+    # Score all transactions
+    print("[INFO] Scoring all transactions...")
     
-    conn = duckdb.connect(DB_FILE)
-    
-    print("[INFO] Loading transactions to score (sample 50k for demo)...")
-    query = f"""
+    df_all = conn.execute("""
         SELECT 
-            nameOrig as client_id,
-            {', '.join(feature_cols)}
+            nameOrig,
+            step,
+            amount,
+            oldbalanceOrg,
+            newbalanceOrig,
+            oldbalanceDest,
+            newbalanceDest,
+            CASE type
+                WHEN 'PAYMENT' THEN 1
+                WHEN 'TRANSFER' THEN 2
+                WHEN 'CASH_OUT' THEN 3
+                WHEN 'DEBIT' THEN 4
+                WHEN 'CASH_IN' THEN 5
+                ELSE 0
+            END as type_encoded
         FROM transactions
-        LIMIT 50000
-    """
-    df = conn.execute(query).df()
+        WHERE amount > 0
+    """).fetchdf()
     
-    X = df[feature_cols]
-    X_scaled = scaler.transform(X)
+    X_all = df_all[features].fillna(0)
+    X_all_scaled = scaler.transform(X_all)
     
-    df['anomaly_score'] = model.decision_function(X_scaled)
-    df['is_anomaly'] = model.predict(X_scaled)
+    # Get anomaly scores
+    scores = iso_forest.score_samples(X_all_scaled)
     
-    anomalies = df[df['is_anomaly'] == -1].copy()
-    anomalies['alert_type'] = 'ML_Anomaly'
-    anomalies['risk_score'] = 85
+    # Normalize to 0-1 range (lower score = more anomalous)
+    # IsolationForest.score_samples returns the opposite of the anomaly score (lower is more anomalous)
+    # We'll normalize it so higher is more anomalous for the summary
+    scores_normalized = 1 / (1 + np.exp(scores))
     
-    if not anomalies.empty:
-        anomalies_to_save = anomalies[['client_id', 'anomaly_score', 'alert_type', 'risk_score']]
-        
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS ml_alerts (
-                client_id VARCHAR,
-                anomaly_score DOUBLE,
-                alert_type VARCHAR,
-                risk_score INTEGER
-            )
-        """)
-        
-        conn.execute("DELETE FROM ml_alerts WHERE alert_type = 'ML_Anomaly'")
-        conn.execute("INSERT INTO ml_alerts SELECT * FROM anomalies_to_save")
-        
-        print(f"[SUCCESS] Anomalies detected: {len(anomalies)} out of {len(df)}")
-        print("\n[INFO] Top 5 Most Anomalous Transactions:")
-        print(anomalies.nsmallest(5, 'anomaly_score')[['client_id', 'amount', 'anomaly_score']])
-    else:
-        print("[WARNING] No anomalies detected with current threshold.")
+    df_all['anomaly_score'] = scores_normalized
+    
+    # Create ml_scores table (using nameOrig and step as a composite key of sorts for demo)
+    conn.execute("DROP TABLE IF EXISTS ml_scores")
+    
+    conn.execute("""
+        CREATE TABLE ml_scores (
+            customer_id VARCHAR,
+            step INTEGER,
+            anomaly_score DOUBLE
+        )
+    """)
+    
+    # Insert scores
+    conn.execute("""
+        INSERT INTO ml_scores 
+        SELECT nameOrig, step, anomaly_score 
+        FROM df_all
+    """)
+    
+    # Get statistics
+    high_risk = len(df_all[df_all['anomaly_score'] >= 0.5])
+    
+    print(f"[INFO] Scored {len(df_all):,} transactions")
+    print(f"[INFO] High risk anomalies (>= 0.5): {high_risk}")
     
     conn.close()
 
 if __name__ == "__main__":
-    train_anomaly_model()
-    score_anomalies()
+    train_and_score()

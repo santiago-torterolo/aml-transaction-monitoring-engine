@@ -2,48 +2,76 @@
 
 
 """
-ML Scoring Engine Orchestrator
-Builds customer profiles and trains anomaly detection models.
+ML Scoring Executor
+Orchestrates baseline creation and anomaly detection
 """
 
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project root to path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(current_dir))
+sys.path.insert(0, project_root)
 
-from baseline import build_customer_baselines
-from anomaly_detection import train_anomaly_model, score_anomalies
+print("\n" + "="*60)
+print("ML SCORING EXECUTOR")
+print("="*60 + "\n")
 
-def run_ml_pipeline():
-    """
-    Execute the complete ML pipeline:
-    1. Build customer behavioral baselines
-    2. Train Isolation Forest model
-    3. Score transactions for anomalies
-    """
-    print("=" * 60)
-    print("ML SCORING ENGINE - PIPELINE EXECUTION")
-    print("=" * 60)
-    
-    steps = [
-        ("Customer Baseline Builder", build_customer_baselines),
-        ("Anomaly Model Training", train_anomaly_model),
-        ("Anomaly Scoring", score_anomalies)
-    ]
-    
-    for step_name, step_func in steps:
-        print(f"\n[STEP] {step_name}")
-        print("-" * 60)
-        try:
-            step_func()
-        except Exception as e:
-            print(f"[CRITICAL ERROR] Step '{step_name}' failed: {e}")
-            return
-        print("-" * 60)
-    
-    print("\n" + "=" * 60)
-    print("[COMPLETED] ML Pipeline executed successfully.")
-    print("=" * 60)
+# ============================================
+# PHASE 1: CREATE BASELINES
+# ============================================
+print("[INFO] Creating customer baselines...")
+try:
+    from baseline import create_baselines
+    create_baselines()
+    print("[SUCCESS] Baselines created")
+except Exception as e:
+    print(f"[ERROR] Baseline creation failed: {str(e)}")
 
-if __name__ == "__main__":
-    run_ml_pipeline()
+print()
+
+# ============================================
+# PHASE 2: ANOMALY DETECTION
+# ============================================
+print("[INFO] Running anomaly detection...")
+try:
+    from anomaly_detection import train_and_score
+    train_and_score()
+    print("[SUCCESS] Anomaly detection completed")
+except Exception as e:
+    print(f"[ERROR] Anomaly detection failed: {str(e)}")
+
+print()
+
+# ============================================
+# SUMMARY
+# ============================================
+print("="*60)
+print("ML SCORING SUMMARY")
+print("="*60)
+
+try:
+    import duckdb
+    conn = duckdb.connect('data/fraud_data.duckdb', read_only=True)
+    
+    result = conn.execute("""
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN anomaly_score >= 0.8 THEN 1 ELSE 0 END) as critical,
+            SUM(CASE WHEN anomaly_score >= 0.6 THEN 1 ELSE 0 END) as high,
+            SUM(CASE WHEN anomaly_score >= 0.5 THEN 1 ELSE 0 END) as medium
+        FROM ml_scores
+    """).fetchone()
+    
+    print(f"Total Scored: {result[0]:,}")
+    print(f"Critical Risk (>= 0.8): {result[1]}")
+    print(f"High Risk (>= 0.6): {result[2]}")
+    print(f"Medium Risk (>= 0.5): {result[3]}")
+    
+    conn.close()
+    
+except Exception as e:
+    print(f"[WARNING] Could not generate summary: {str(e)}")
+
+print("="*60 + "\n")

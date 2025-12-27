@@ -1,71 +1,67 @@
 
 
 
-import duckdb
-import os
+"""
+Round Amount Detection Rule
+Detects suspicious round number patterns
+"""
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_FILE = os.path.join(BASE_DIR, "data", "fraud_data.duckdb")
+import duckdb
 
 def detect_round_amounts():
     """
-    RULE #3: Round Amount Pattern Detection
-    
-    Logic:
-    Transactions in exact round numbers are statistically unusual and often
-    indicate manual structuring or coordinated laundering activities.
-    
-    Criteria:
-    - Amount divisible by 1000 or 5000
-    - Minimum amount of $1,000
-    - Client performs at least 2 such transactions
+    Detect suspicious use of round amounts
     """
-    print("[INFO] Running Rule: Round Amount Pattern Detection...")
     
-    conn = duckdb.connect(DB_FILE)
+    conn = duckdb.connect('data/fraud_data.duckdb')
     
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rule_alerts (
+            alert_id INTEGER PRIMARY KEY,
+            customer_id VARCHAR,
+            rule_name VARCHAR,
+            detection_date DATE,
+            amount DECIMAL(18,2),
+            description TEXT
+        )
+    """)
+    
+    max_id = conn.execute("SELECT COALESCE(MAX(alert_id), 0) FROM rule_alerts").fetchone()[0]
+    
+    # PARAMETROS MAS FLEXIBLES: 100000 divisible por 100000
     query = """
+    WITH round_amounts AS (
         SELECT 
-            nameOrig as client_id,
-            COUNT(*) as round_txn_count,
-            CAST(SUM(amount) AS DECIMAL(18,2)) as total_volume,
-            'Round_Amount' as alert_type,
-            65 as risk_score
+            nameOrig as customer_id,
+            amount,
+            step
         FROM transactions
-        WHERE (amount % 1000 = 0 OR amount % 5000 = 0)
-          AND amount >= 1000
-        GROUP BY nameOrig
-        HAVING COUNT(*) >= 2
-        ORDER BY round_txn_count DESC
-        LIMIT 50
+        WHERE amount % 100000 = 0
+          AND amount >= 100000
+          AND type IN ('TRANSFER', 'CASH_OUT')
+    )
+    INSERT INTO rule_alerts (alert_id, customer_id, rule_name, detection_date, amount, description)
+    SELECT 
+        ROW_NUMBER() OVER () + ? as alert_id,
+        customer_id,
+        'Round_Amount_Pattern' as rule_name,
+        CURRENT_DATE as detection_date,
+        amount,
+        'Suspicious exact round amount: $' || ROUND(amount, 2)
+    FROM round_amounts
+    LIMIT 50
     """
     
-    try:
-        alerts_df = conn.execute(query).df()
-        
-        if not alerts_df.empty:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS alerts (
-                    client_id VARCHAR, 
-                    round_txn_count INTEGER,
-                    total_volume DECIMAL, 
-                    alert_type VARCHAR, 
-                    risk_score INTEGER
-                )
-            """)
-            
-            conn.execute("DELETE FROM alerts WHERE alert_type = 'Round_Amount'")
-            conn.execute("INSERT INTO alerts SELECT * FROM alerts_df")
-            
-            print(f"[SUCCESS] Round Amount Alerts Found: {len(alerts_df)}")
-            print(alerts_df.head(5))
-        else:
-            print("[WARNING] No round amount patterns detected.")
+    conn.execute(query, [max_id])
     
-    except Exception as e:
-        print(f"[ERROR] Round amount rule failed: {e}")
-    finally:
-        conn.close()
+    count = conn.execute("""
+        SELECT COUNT(*) FROM rule_alerts 
+        WHERE rule_name = 'Round_Amount_Pattern'
+    """).fetchone()[0]
+    
+    print(f"[INFO] Round Amounts: {count} alerts generated")
+    
+    conn.close()
 
 if __name__ == "__main__":
     detect_round_amounts()

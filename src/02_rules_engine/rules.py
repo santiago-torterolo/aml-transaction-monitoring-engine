@@ -1,76 +1,73 @@
 
 
 
-import duckdb
-import os
+"""
+Structuring Detection Rule
+Detects multiple small transactions below reporting threshold
+"""
 
-# CONFIGURATION
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_FILE = os.path.join(BASE_DIR, "data", "fraud_data.duckdb")
+import duckdb
 
 def detect_structuring():
     """
-    RULE #1: Structuring Detection (Smurfing)
-    
-    Logic:
-    Identify customers who perform multiple small transactions that sum to 
-    significant amounts, potentially to evade reporting thresholds.
-    
-    Criteria:
-    - Transaction Type: CASH_OUT, TRANSFER, or PAYMENT
-    - Amount: Below $50,000 per transaction
-    - Frequency: Minimum 3 transactions per client
-    - Total Volume: Exceeds $10,000
+    Detect potential structuring (smurfing) patterns
     """
-    print("[INFO] Running Rule: Structuring Detection...")
     
-    conn = duckdb.connect(DB_FILE)
+    conn = duckdb.connect('data/fraud_data.duckdb')
     
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rule_alerts (
+            alert_id INTEGER PRIMARY KEY,
+            customer_id VARCHAR,
+            rule_name VARCHAR,
+            detection_date DATE,
+            amount DECIMAL(18,2),
+            description TEXT
+        )
+    """)
+    
+    max_id = conn.execute("SELECT COALESCE(MAX(alert_id), 0) FROM rule_alerts").fetchone()[0]
+    
+    # PARAMETROS MAS FLEXIBLES: >= 2 transacciones, total > 5000
     query = """
+    WITH structuring_candidates AS (
         SELECT 
-            nameOrig as client_id,
-            COUNT(*) as txn_count,
-            CAST(SUM(amount) AS DECIMAL(18,2)) as total_volume,
-            CAST(AVG(amount) AS DECIMAL(18,2)) as avg_amount,
-            'Structuring' as alert_type,
-            80 as risk_score
+            nameOrig as customer_id,
+            step,
+            COUNT(*) as tx_count,
+            SUM(amount) as total_amount,
+            AVG(amount) as avg_amount
         FROM transactions
-        WHERE type IN ('CASH_OUT', 'TRANSFER', 'PAYMENT')
-          AND amount < 50000
-        GROUP BY nameOrig
-        HAVING COUNT(*) >= 3
-           AND SUM(amount) > 10000
-        ORDER BY total_volume DESC
-        LIMIT 50
+        WHERE amount < 50000
+          AND amount > 1000
+          AND type IN ('CASH_OUT', 'TRANSFER')
+        GROUP BY nameOrig, step
+        HAVING COUNT(*) >= 2
+           AND SUM(amount) > 5000
+    )
+    INSERT INTO rule_alerts (alert_id, customer_id, rule_name, detection_date, amount, description)
+    SELECT 
+        ROW_NUMBER() OVER () + ? as alert_id,
+        customer_id,
+        'Structuring_Detection' as rule_name,
+        CURRENT_DATE as detection_date,
+        total_amount as amount,
+        'Potential structuring: ' || tx_count || ' transactions totaling $' || 
+        ROUND(total_amount, 2) || ' (avg: $' || ROUND(avg_amount, 2) || ')'
+    FROM structuring_candidates
+    LIMIT 50
     """
     
-    try:
-        alerts_df = conn.execute(query).df()
-        
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS alerts (
-                client_id VARCHAR, 
-                txn_count INTEGER, 
-                total_volume DECIMAL, 
-                avg_amount DECIMAL, 
-                alert_type VARCHAR, 
-                risk_score INTEGER
-            )
-        """)
-        
-        conn.execute("DELETE FROM alerts WHERE alert_type = 'Structuring'")
-        
-        if not alerts_df.empty:
-            conn.execute("INSERT INTO alerts SELECT * FROM alerts_df")
-            print(f"[SUCCESS] Structuring Alerts Found: {len(alerts_df)}")
-            print(alerts_df.head(5))
-        else:
-            print("[WARNING] No structuring patterns detected.")
-        
-    except Exception as e:
-        print(f"[ERROR] Executing rule: {e}")
-    finally:
-        conn.close()
+    conn.execute(query, [max_id])
+    
+    count = conn.execute("""
+        SELECT COUNT(*) FROM rule_alerts 
+        WHERE rule_name = 'Structuring_Detection'
+    """).fetchone()[0]
+    
+    print(f"[INFO] Structuring Detection: {count} alerts generated")
+    
+    conn.close()
 
 if __name__ == "__main__":
     detect_structuring()
