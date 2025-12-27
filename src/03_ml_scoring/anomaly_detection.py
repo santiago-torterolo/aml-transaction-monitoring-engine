@@ -20,9 +20,11 @@ def train_and_score():
     
     print("[INFO] Loading transaction data...")
     
-    # Use valid columns and sampling
+    # Sample 10% for training (usando step como identificador)
     df_sample = conn.execute("""
         SELECT 
+            step,
+            nameOrig,
             amount,
             oldbalanceOrg,
             newbalanceOrig,
@@ -35,11 +37,14 @@ def train_and_score():
                 WHEN 'DEBIT' THEN 4
                 WHEN 'CASH_IN' THEN 5
                 ELSE 0
-            END as type_encoded
+            END as type_encoded,
+            ROW_NUMBER() OVER () as row_id
         FROM transactions
         WHERE amount > 0
-        LIMIT 50000
     """).fetchdf()
+    
+    # Sample 10%
+    df_sample = df_sample[df_sample['row_id'] % 10 == 0].copy()
     
     print(f"[INFO] Training sample: {len(df_sample):,} transactions")
     
@@ -76,8 +81,8 @@ def train_and_score():
     
     df_all = conn.execute("""
         SELECT 
-            nameOrig,
             step,
+            nameOrig,
             amount,
             oldbalanceOrg,
             newbalanceOrig,
@@ -90,7 +95,8 @@ def train_and_score():
                 WHEN 'DEBIT' THEN 4
                 WHEN 'CASH_IN' THEN 5
                 ELSE 0
-            END as type_encoded
+            END as type_encoded,
+            ROW_NUMBER() OVER () as row_id
         FROM transactions
         WHERE amount > 0
     """).fetchdf()
@@ -98,39 +104,55 @@ def train_and_score():
     X_all = df_all[features].fillna(0)
     X_all_scaled = scaler.transform(X_all)
     
-    # Get anomaly scores
-    scores = iso_forest.score_samples(X_all_scaled)
+    # Get anomaly predictions
+    predictions = iso_forest.predict(X_all_scaled)
     
-    # Normalize to 0-1 range (lower score = more anomalous)
-    # IsolationForest.score_samples returns the opposite of the anomaly score (lower is more anomalous)
-    # We'll normalize it so higher is more anomalous for the summary
-    scores_normalized = 1 / (1 + np.exp(scores))
+    # Get decision scores
+    decision_scores = iso_forest.decision_function(X_all_scaled)
     
-    df_all['anomaly_score'] = scores_normalized
+    # Filter only anomalies
+    df_anomalies = df_all[predictions == -1].copy()
+    anomaly_decision_scores = decision_scores[predictions == -1]
     
-    # Create ml_scores table (using nameOrig and step as a composite key of sorts for demo)
+    # Normalize anomaly scores to 0-1
+    if len(df_anomalies) > 0:
+        min_score = anomaly_decision_scores.min()
+        max_score = anomaly_decision_scores.max()
+        
+        if max_score != min_score:
+            normalized_scores = (max_score - anomaly_decision_scores) / (max_score - min_score)
+        else:
+            normalized_scores = np.ones(len(df_anomalies)) * 0.5
+        
+        df_anomalies['anomaly_score'] = normalized_scores
+    
+    # Create ml_scores table
     conn.execute("DROP TABLE IF EXISTS ml_scores")
     
     conn.execute("""
         CREATE TABLE ml_scores (
-            customer_id VARCHAR,
+            row_id INTEGER PRIMARY KEY,
             step INTEGER,
+            customer_id VARCHAR,
             anomaly_score DOUBLE
         )
     """)
     
-    # Insert scores
-    conn.execute("""
-        INSERT INTO ml_scores 
-        SELECT nameOrig, step, anomaly_score 
-        FROM df_all
-    """)
+    # Insert only anomalies
+    if len(df_anomalies) > 0:
+        for _, row in df_anomalies.iterrows():
+            conn.execute("""
+                INSERT INTO ml_scores VALUES (?, ?, ?, ?)
+            """, [int(row['row_id']), int(row['step']), row['nameOrig'], float(row['anomaly_score'])])
     
     # Get statistics
-    high_risk = len(df_all[df_all['anomaly_score'] >= 0.5])
+    high_risk = (df_anomalies['anomaly_score'] >= 0.7).sum() if len(df_anomalies) > 0 else 0
+    medium_risk = (df_anomalies['anomaly_score'] >= 0.5).sum() if len(df_anomalies) > 0 else 0
     
     print(f"[INFO] Scored {len(df_all):,} transactions")
-    print(f"[INFO] High risk anomalies (>= 0.5): {high_risk}")
+    print(f"[INFO] Anomalies detected: {len(df_anomalies)} ({len(df_anomalies)/len(df_all)*100:.4f}%)")
+    print(f"[INFO] High risk (score >= 0.7): {high_risk}")
+    print(f"[INFO] Medium risk (score >= 0.5): {medium_risk}")
     
     conn.close()
 

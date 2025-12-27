@@ -1,6 +1,5 @@
 
 
-
 """
 Master Pipeline Orchestrator
 Executes the complete AML detection workflow
@@ -106,4 +105,32 @@ try:
     stats = conn.execute("""
         SELECT 
             COUNT(*) as total_transactions,
-            (
+            (SELECT COUNT(*) FROM rule_alerts) as rule_alerts,
+            (SELECT COUNT(*) FROM ml_scores WHERE anomaly_score >= 0.5) as ml_alerts
+        FROM transactions
+    """).fetchdf()
+    
+    total_tx = stats['total_transactions'].iloc[0]
+    rule_alerts = stats['rule_alerts'].iloc[0]
+    ml_alerts = stats['ml_alerts'].iloc[0]
+    alert_rate = ((rule_alerts + ml_alerts) / total_tx * 100)
+    
+    print(f"Total Transactions: {total_tx:,}")
+    print(f"Rule-based Alerts: {rule_alerts}")
+    print(f"ML Anomalies: {ml_alerts}")
+    print(f"Alert Rate: {alert_rate:.4f}%")
+    
+    conn.close()
+    
+except Exception as e:
+    print(f"[WARNING] Could not generate summary: {str(e)}")
+
+print("="*60)
+print(f"Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print("[SUCCESS] Pipeline completed successfully!")
+print("="*60 + "\n")
+
+print("NEXT STEPS:")
+print("  - Launch API: python src/05_api/app.py")
+print("  - Launch Dashboard: streamlit run src/06_dashboard/app.py")
+print()

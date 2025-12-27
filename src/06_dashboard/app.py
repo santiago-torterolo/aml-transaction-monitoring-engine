@@ -30,17 +30,17 @@ conn = get_connection()
 # ============================================
 # SIDEBAR
 # ============================================
-st.sidebar.title("🛡️ AML Monitor")
+st.sidebar.title("AML Monitor")
 st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["📊 Dashboard", "🚨 Alerts", "👤 Customer Lookup", "📈 Analytics"]
+    ["Dashboard", "Alerts", "Customer Lookup", "Analytics"]
 )
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### System Info")
-st.sidebar.info(f"🕐 Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+st.sidebar.info(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
 # ============================================
 # HELPER FUNCTIONS
@@ -76,13 +76,13 @@ def get_rule_alerts(limit=50):
 def get_ml_alerts(limit=50):
     query = f"""
     SELECT 
-        t.customer_id,
-        t.step,
+        m.customer_id,
+        m.step,
         t.type,
         ROUND(t.amount, 2) as amount,
         ROUND(m.anomaly_score, 4) as anomaly_score
     FROM ml_scores m
-    JOIN transactions t ON m.transaction_id = t.transaction_id
+    JOIN transactions t ON m.step = t.step AND m.customer_id = t.nameOrig
     WHERE m.anomaly_score >= 0.5
     ORDER BY m.anomaly_score DESC
     LIMIT {limit}
@@ -93,15 +93,15 @@ def get_ml_alerts(limit=50):
 def get_customer_profile(customer_id):
     query = f"""
     SELECT 
-        customer_id,
+        nameOrig as customer_id,
         COUNT(*) as total_transactions,
         ROUND(SUM(amount), 2) as total_amount,
         ROUND(AVG(amount), 2) as avg_amount,
         ROUND(MAX(amount), 2) as max_amount,
         COUNT(DISTINCT type) as transaction_types
     FROM transactions
-    WHERE customer_id = '{customer_id}'
-    GROUP BY customer_id
+    WHERE nameOrig = '{customer_id}'
+    GROUP BY nameOrig
     """
     return conn.execute(query).fetchdf()
 
@@ -158,8 +158,8 @@ def get_risk_distribution():
 # ============================================
 # PAGE 1: DASHBOARD
 # ============================================
-if page == "📊 Dashboard":
-    st.title("🛡️ AML Transaction Monitoring Dashboard")
+if page == "Dashboard":
+    st.title("AML Transaction Monitoring Dashboard")
     st.markdown("---")
     
     # Get statistics
@@ -176,16 +176,14 @@ if page == "📊 Dashboard":
     
     with col2:
         st.metric(
-            label="Rule Alerts 🚨",
-            value=int(stats['rule_alerts'].iloc[0]),
-            delta=None
+            label="Rule Alerts",
+            value=int(stats['rule_alerts'].iloc[0])
         )
     
     with col3:
         st.metric(
-            label="ML Anomalies 🤖",
-            value=int(stats['ml_alerts'].iloc[0]),
-            delta=None
+            label="ML Anomalies",
+            value=int(stats['ml_alerts'].iloc[0])
         )
     
     with col4:
@@ -202,7 +200,7 @@ if page == "📊 Dashboard":
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("📊 Alerts by Rule Type")
+        st.subheader("Alerts by Rule Type")
         alert_dist = get_alert_distribution()
         if not alert_dist.empty:
             fig = px.bar(
@@ -219,7 +217,7 @@ if page == "📊 Dashboard":
             st.info("No rule alerts detected")
     
     with col2:
-        st.subheader("🎯 Risk Score Distribution")
+        st.subheader("Risk Score Distribution")
         risk_dist = get_risk_distribution()
         if not risk_dist.empty:
             colors = {'Critical': '#FF4B4B', 'High': '#FFA500', 
@@ -239,44 +237,34 @@ if page == "📊 Dashboard":
 # ============================================
 # PAGE 2: ALERTS
 # ============================================
-elif page == "🚨 Alerts":
-    st.title("🚨 Active Alerts")
+elif page == "Alerts":
+    st.title("Active Alerts")
     st.markdown("---")
     
     tab1, tab2 = st.tabs(["Rule-Based Alerts", "ML Anomalies"])
     
     with tab1:
-        st.subheader("📋 Rule-Based Detection")
+        st.subheader("Rule-Based Detection")
         limit = st.slider("Number of alerts to display", 10, 100, 50)
         
         rule_alerts = get_rule_alerts(limit)
         
         if not rule_alerts.empty:
-            # Color code by rule type
-            def highlight_row(row):
-                if 'Structuring' in row['rule_name']:
-                    return ['background-color: #ffcccc'] * len(row)
-                elif 'Velocity' in row['rule_name']:
-                    return ['background-color: #ffe6cc'] * len(row)
-                else:
-                    return ['background-color: #fff'] * len(row)
-            
-            styled_df = rule_alerts.style.apply(highlight_row, axis=1)
-            st.dataframe(styled_df, use_container_width=True, height=600)
+            st.dataframe(rule_alerts, use_container_width=True, height=600)
             
             # Download button
             csv = rule_alerts.to_csv(index=False)
             st.download_button(
-                label="📥 Download CSV",
+                label="Download CSV",
                 data=csv,
                 file_name=f"rule_alerts_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
         else:
-            st.success("✅ No active rule-based alerts")
+            st.success("No active rule-based alerts")
     
     with tab2:
-        st.subheader("🤖 Machine Learning Anomalies")
+        st.subheader("Machine Learning Anomalies")
         limit = st.slider("Number of anomalies to display", 10, 100, 50, key="ml_slider")
         
         ml_alerts = get_ml_alerts(limit)
@@ -284,9 +272,9 @@ elif page == "🚨 Alerts":
         if not ml_alerts.empty:
             # Add risk indicator
             ml_alerts['risk_level'] = ml_alerts['anomaly_score'].apply(
-                lambda x: '🔴 Critical' if x >= 0.8 else 
-                         '🟠 High' if x >= 0.6 else 
-                         '🟡 Medium'
+                lambda x: 'Critical' if x >= 0.8 else 
+                         'High' if x >= 0.6 else 
+                         'Medium'
             )
             
             st.dataframe(ml_alerts, use_container_width=True, height=600)
@@ -294,30 +282,30 @@ elif page == "🚨 Alerts":
             # Download button
             csv = ml_alerts.to_csv(index=False)
             st.download_button(
-                label="📥 Download CSV",
+                label="Download CSV",
                 data=csv,
                 file_name=f"ml_anomalies_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
         else:
-            st.success("✅ No ML anomalies detected")
+            st.success("No ML anomalies detected")
 
 # ============================================
 # PAGE 3: CUSTOMER LOOKUP
 # ============================================
-elif page == "👤 Customer Lookup":
-    st.title("👤 Customer Risk Profile")
+elif page == "Customer Lookup":
+    st.title("Customer Risk Profile")
     st.markdown("---")
     
     customer_id = st.text_input("Enter Customer ID:", placeholder="e.g., C1234567890")
     
-    if st.button("🔍 Search"):
+    if st.button("Search"):
         if customer_id:
             # Get profile
             profile = get_customer_profile(customer_id)
             
             if not profile.empty:
-                st.success(f"✅ Customer {customer_id} found")
+                st.success(f"Customer {customer_id} found")
                 
                 # Display metrics
                 col1, col2, col3, col4 = st.columns(4)
@@ -337,23 +325,23 @@ elif page == "👤 Customer Lookup":
                 alerts = get_customer_alerts(customer_id)
                 
                 if not alerts.empty:
-                    st.error(f"⚠️ {len(alerts)} Alert(s) Detected")
+                    st.error(f"{len(alerts)} Alert(s) Detected")
                     st.dataframe(alerts, use_container_width=True)
                 else:
-                    st.success("✅ No alerts for this customer")
+                    st.success("No alerts for this customer")
             else:
-                st.error("❌ Customer not found")
+                st.error("Customer not found")
         else:
-            st.warning("⚠️ Please enter a Customer ID")
+            st.warning("Please enter a Customer ID")
 
 # ============================================
 # PAGE 4: ANALYTICS
 # ============================================
-elif page == "📈 Analytics":
-    st.title("📈 Advanced Analytics")
+elif page == "Analytics":
+    st.title("Advanced Analytics")
     st.markdown("---")
     
-    st.subheader("🔍 Transaction Type Distribution")
+    st.subheader("Transaction Type Distribution")
     
     query = """
     SELECT 
@@ -392,7 +380,7 @@ elif page == "📈 Analytics":
         st.plotly_chart(fig, use_container_width=True)
     
     st.markdown("---")
-    st.subheader("📊 System Performance Metrics")
+    st.subheader("System Performance Metrics")
     
     col1, col2, col3 = st.columns(3)
     
@@ -411,7 +399,7 @@ st.sidebar.markdown(
     """
     <div style='text-align: center'>
     <p style='font-size: 12px; color: #888;'>
-    🛡️ AML Transaction Monitor<br>
+    AML Transaction Monitor<br>
     Built with Streamlit + DuckDB<br>
     © 2025 Santiago Torterolo
     </p>
