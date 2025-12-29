@@ -34,20 +34,36 @@ A comprehensive AML (Anti-Money Laundering) system designed to detect suspicious
 ## Architecture
 
 ┌─────────────────────────────────────────────────┐
+
 │ Data Layer: DuckDB (OLAP-optimized) │
+
 │ Storage: 6.3M transactions, ~500MB │
+
 └─────────────────────────────────────────────────┘
+
 ↓
+
 ┌─────────────────────────────────────────────────┐
+
+
 │ Detection Layer: │
+
 │ ├─ SQL Rules Engine (4 typologies) │
+
 │ └─ ML Scoring (Isolation Forest) │
+
 └─────────────────────────────────────────────────┘
+
 ↓
+
 ┌─────────────────────────────────────────────────┐
+
 │ Integration Layer: │
+
 │ ├─ REST API (Flask) - 5 endpoints │
+
 │ └─ Dashboard (Streamlit) - 4 pages │
+
 └─────────────────────────────────────────────────┘
 
 ---
@@ -69,47 +85,89 @@ A comprehensive AML (Anti-Money Laundering) system designed to detect suspicious
 ## Project Structure
 
 aml-transaction-monitoring-engine/
+
 │
+
 ├── data/
+
 │ ├── paysim.csv (6.3M transactions)
+
 │ ├── fraud_data.duckdb (OLAP database)
+
 │ └── isolation_forest.pkl (Trained ML model)
+
 │
+
 ├── src/
+
 │ ├── 01_etl/
+
 │ │ └── load_data.py (ETL pipeline)
+
 │ │
+
 │ ├── 02_rules_engine/
+
 │ │ ├── rules.py (Structuring detection)
+
 │ │ ├── velocity_rule.py (Velocity abuse)
+
 │ │ ├── round_amounts.py (Round amount patterns)
+
 │ │ ├── beneficiary_pattern.py (Beneficiary rotation)
+
 │ │ └── executor.py (Orchestrator)
+
 │ │
+
 │ ├── 03_ml_scoring/
+
 │ │ ├── baseline.py (Customer profiling)
+
 │ │ ├── anomaly_detection.py (Isolation Forest)
+
 │ │ └── executor.py (Orchestrator)
+
 │ │
+
 │ ├── 04_orchestration/
+
 │ │ └── master_pipeline.py (End-to-end pipeline)
+
 │ │
+
 │ ├── 05_api/
+
 │ │ └── app.py (Flask REST API)
+
 │ │
+
 │ └── 06_dashboard/
+
 │ └── app.py (Streamlit dashboard)
+
 │
+
 ├── docs/
+
 │ └── screenshots/
+
 │ ├── dashboard_overview.png
+
 │ ├── dashboard_kpis.png
+
 │ ├── alerts_rules.png
+
 │ ├── alerts_ml.png
+
 │ ├── customer_lookup.png
+
 │ └── analytics.png
+
 │
+
 ├── requirements.txt
+
 └── README.md
 
 ---
@@ -127,7 +185,9 @@ aml-transaction-monitoring-engine/
 
 **Command:**
 
+```
 python src/01_etl/load_data.py
+```
 
 ---
 
@@ -169,7 +229,9 @@ python src/01_etl/load_data.py
 
 **Command:**
 
+```
 python src/02_rules_engine/executor.py
+```
 
 ---
 
@@ -182,13 +244,21 @@ python src/02_rules_engine/executor.py
 Creates statistical profiles per customer:
 
 SELECT
+
 customer_id,
+
 tx_count,
+
 avg_amount,
+
 std_amount,
+
 max_amount,
+
 avg_balance,
+
 transaction_types
+
 FROM customer_baselines
 
 #### Isolation Forest Algorithm
@@ -213,7 +283,9 @@ FROM customer_baselines
 
 **Command:**
 
+```
 python src/03_ml_scoring/anomaly_detection.py
+```
 
 ---
 
@@ -231,7 +303,9 @@ Sequence:
 
 **Command:**
 
+```
 python src/04_orchestration/master_pipeline.py
+```
 
 ---
 
@@ -252,27 +326,39 @@ python src/04_orchestration/master_pipeline.py
 #### Example Usage
 
 Health check
+```
 curl http://localhost:5000/api/v1/health
+```
 
 System statistics
+```
 curl http://localhost:5000/api/v1/stats
-
+```
 Response:
+```
 {
 "total_transactions": 6362620,
 "rule_alerts": 150,
 "ml_alerts": 965,
 "alert_rate": 0.0175
 }
+```
+
 Get rule-based alerts
+```
 curl http://localhost:5000/api/v1/alerts?limit=10
+```
 
 Get customer profile
+```
 curl http://localhost:5000/api/v1/customer/C363736674
+```
 
 **Command:**
 
+```
 python src/05_api/app.py
+```
 
 Access: http://localhost:5000
 
@@ -317,7 +403,9 @@ Access: http://localhost:5000
 
 **Command:**
 
+```
 streamlit run src/06_dashboard/app.py
+```
 
 Access: http://localhost:8501
 
@@ -361,22 +449,33 @@ Access: http://localhost:8501
 
 ### 1. Clone Repository
 
-git clone https://github.com/santiago-torterolo/aml-transaction-monitoring-engine.git
+```git clone https://github.com/santiago-torterolo/aml-transaction-monitoring-engine.git
+```
+
+```
 cd aml-transaction-monitoring-engine
+```
 
 ### 2. Create Virtual Environment
 
+```
 python -m venv venv
+```
 
 Windows
+```
 .\venv\Scripts\Activate.ps1
+```
 
 Linux/Mac
+```
 source venv/bin/activate
-
+```
 ### 3. Install Dependencies
 
+```
 pip install -r requirements.txt
+```
 
 ### 4. Download Dataset
 
@@ -385,28 +484,38 @@ pip install -r requirements.txt
 
 ### 5. Run ETL Pipeline
 
+```
 python src/01_etl/load_data.py
+```
 
 ### 6. Execute Detection Pipeline
 
 Full pipeline (rules + ML)
+```
 python src/04_orchestration/master_pipeline.py
+```
 
 Or run individually
-python src/02_rules_engine/executor.py # Rules only
-python src/03_ml_scoring/executor.py # ML only
+```python src/02_rules_engine/executor.py # Rules only
+```
+```python src/03_ml_scoring/executor.py # ML only
+```
 
 ### 7. Launch Interfaces
 
 **REST API:**
 
+```
 python src/05_api/app.py
+```
 
 Access: http://localhost:5000
 
 **Dashboard:**
 
+```
 streamlit run src/06_dashboard/app.py
+```
 
 Access: http://localhost:8501
 
@@ -519,38 +628,6 @@ Access: http://localhost:8501
 ### For Full-Stack Roles
 
 > "Delivered a complete end-to-end system: ETL pipeline → detection engines → REST API → interactive dashboard. Integrated Flask backend with Streamlit frontend, implemented caching strategies, and designed for both local execution and investigator workflows."
-
----
-
-## Future Enhancements
-
-- [ ] Network graph analysis (transaction flow visualization)
-- [ ] Supervised learning module (with labeled fraud data)
-- [ ] Real-time streaming integration (Kafka/Spark)
-- [ ] Advanced NLP for transaction description analysis
-- [ ] Geographic risk scoring with external data
-- [ ] Automated SAR (Suspicious Activity Report) generation
-- [ ] Multi-user authentication and RBAC
-- [ ] Webhook notifications for critical alerts
-- [ ] Time-series forecasting for trend analysis
-- [ ] Model explainability (SHAP values)
-
----
-
-## Production Deployment Checklist
-
-- [x] Data ingestion & validation
-- [x] Rules engine implementation
-- [x] ML model training & scoring
-- [x] REST API endpoints
-- [x] Interactive dashboard
-- [ ] Unit tests (pytest)
-- [ ] API documentation (Swagger)
-- [ ] Docker containerization
-- [ ] CI/CD pipeline (GitHub Actions)
-- [ ] Monitoring & alerting
-- [ ] User documentation
-- [ ] Security hardening
 
 ---
 
